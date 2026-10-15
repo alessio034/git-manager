@@ -75,6 +75,44 @@ PLATAFORMAS = {
     },
 }
 
+# Tipos de rama temporal de Git Flow: nombre visible y color en la lista
+FLUJO = {
+    "feature": ("Feature", AZUL),
+    "release": ("Release", AMARILLO),
+    "hotfix": ("Hotfix", ROJO),
+}
+
+GUIA_FLUJO = [
+    ("¿Que es Git Flow?\n", "titulo"),
+    ("Es una forma ordenada de trabajar con ramas. Cada tipo de trabajo tiene su propia rama, "
+     "asi la version publicada nunca se rompe mientras desarrollas.\n\n", ""),
+    ("Ramas fijas\n", "titulo"),
+    ("main", "rama"), ("  La version publicada (produccion). Solo recibe releases y hotfixes "
+                       "terminados, y cada uno queda marcado con una etiqueta de version.\n", ""),
+    ("develop", "rama"), ("  Donde se juntan las funciones terminadas para la proxima version.\n\n", ""),
+    ("Ramas temporales\n", "titulo"),
+    ("feature/", "feature"), ("  Una funcion nueva. Sale de develop y al terminar vuelve a develop.\n", ""),
+    ("release/", "release"), ("  Prepara una version: ultimos ajustes y pruebas. Sale de develop y al "
+                              "terminar se fusiona en main (con etiqueta) y en develop.\n", ""),
+    ("hotfix/", "hotfix"), ("  Arreglo urgente de lo publicado. Sale de main y al terminar se fusiona en "
+                            "main (con etiqueta) y en develop.\n\n", ""),
+    ("Ejemplo\n", "titulo"),
+    ("1. ＋ Feature \"login\"  →  crea feature/login desde develop.\n"
+     "2. Programas y guardas commits en la pestaña Cambios.\n"
+     "3. ✓ Terminar  →  feature/login se fusiona en develop y se borra.\n"
+     "4. ＋ Release \"1.0.0\"  →  crea release/1.0.0 desde develop.\n"
+     "5. Corriges detalles y guardas commits.\n"
+     "6. ✓ Terminar  →  se fusiona en main, se crea la etiqueta 1.0.0 y se fusiona en develop.\n"
+     "7. ¿Fallo algo en produccion? ＋ Hotfix \"1.0.1\" desde main, lo arreglas y ✓ Terminar.\n\n", ""),
+    ("main     ●─────────────────●────────●\n"
+     "          \\               ↗ \\      ↗\n"
+     "release    \\       ●──●──●   hotfix\n"
+     "            \\     ↗       ↘      ↘\n"
+     "develop      ●──●──────────●──────●\n"
+     "              \\  ↗\n"
+     "feature        ●\n", "diagrama"),
+]
+
 CARPETA_CONFIG = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), "GitManager")
 ARCHIVO_CUENTAS = os.path.join(CARPETA_CONFIG, "cuentas.json")
 
@@ -251,6 +289,15 @@ class Git:
         o = self.run("branch", "-r", "--format=%(refname:short)", silencioso=True)[1]
         return [l.strip()[len("origin/"):] for l in o.splitlines()
                 if l.strip().startswith("origin/") and l.strip() != "origin/HEAD"]
+
+    def etiquetas(self):
+        """Etiquetas de version, de la mas nueva a la mas vieja."""
+        o = self.run("tag", "--sort=-v:refname", silencioso=True)[1]
+        return [l.strip() for l in o.splitlines() if l.strip()]
+
+    def hay_cambios_sin_guardar(self):
+        """Cambios en archivos ya registrados (los archivos nuevos no impiden fusionar)."""
+        return bool(self.run("status", "--porcelain", "--untracked-files=no", silencioso=True)[1].strip())
 
     def nombre_rama_valido(self, nombre):
         return self.run("check-ref-format", "--branch", nombre, silencioso=True)[0] == 0
@@ -603,6 +650,7 @@ class App(tk.Tk):
         self._tab_cambios()
         self._tab_historial()
         self._tab_ramas()
+        self._tab_flujo()
         self._tab_cuentas()
         self.vacio = self._panel_vacio(self.contenedor)
 
@@ -738,6 +786,63 @@ class App(tk.Tk):
                                               ("estado", "", 140, False)], "browse")
         self.arbol_ramas.tag_configure("actual", foreground=VERDE)
         self.arbol_ramas.bind("<Double-1>", lambda e: self.cambiar_rama())
+
+    def _tab_flujo(self):
+        tab = tk.Frame(self.notebook, bg=BG)
+        self.notebook.add(tab, text="  Git Flow  ")
+
+        # Estado: si esta inicializado y cuales son las ramas fijas
+        cab = tk.Frame(tab, bg=PANEL, padx=16, pady=12)
+        cab.pack(fill="x", pady=(10, 0))
+        cab.columnconfigure(0, weight=1)
+        self.lbl_flujo = tk.Label(cab, bg=PANEL, fg=TEXTO, font=FUENTE_B, anchor="w")
+        self.lbl_flujo.grid(row=0, column=0, sticky="ew")
+        self.lbl_flujo_sub = tk.Label(cab, bg=PANEL, fg=TENUE, anchor="w", justify="left")
+        self.lbl_flujo_sub.grid(row=1, column=0, sticky="ew")
+        self.btn_flujo_init = boton(cab, "Inicializar Git Flow", self.flujo_inicializar, ACENTO, fg="white")
+        self.btn_flujo_init.grid(row=0, column=1, rowspan=2, padx=(12, 0))
+
+        div = tk.PanedWindow(tab, orient="horizontal", bg=BG, sashwidth=8, bd=0)
+        div.pack(fill="both", expand=True, pady=(10, 0))
+
+        # Ramas en curso y acciones
+        izq = tk.Frame(div, bg=BG)
+        terminar = tk.Frame(izq, bg=BG)
+        terminar.pack(side="bottom", fill="x", pady=(6, 0))
+        boton(terminar, "✓ Terminar seleccionada", self.flujo_terminar, VERDE, fg="white"
+              ).pack(side="left", padx=(0, 6))
+        boton(terminar, "⬆ Publicar", self.flujo_publicar).pack(side="left", padx=(0, 6))
+        boton(terminar, "⇄ Cambiar a esta rama", self.flujo_cambiar).pack(side="left")
+        iniciar = tk.Frame(izq, bg=BG)
+        iniciar.pack(side="bottom", fill="x", pady=(8, 0))
+        for tipo, (nombre, color) in FLUJO.items():
+            boton(iniciar, f"＋ {nombre}", lambda t=tipo: self.flujo_iniciar(t), CARD, fg=color
+                  ).pack(side="left", padx=(0, 6))
+        tk.Label(izq, text="Ramas de Git Flow en curso", bg=BG, fg=TEXTO, font=FUENTE_B
+                 ).pack(anchor="w", pady=(0, 6))
+        self.arbol_flujo = self._arbol(izq, [("rama", "Rama", 260, True),
+                                             ("tipo", "Tipo", 90, False),
+                                             ("destino", "Al terminar se fusiona en", 210, False)], "browse")
+        for tipo, (_, color) in FLUJO.items():
+            self.arbol_flujo.tag_configure(tipo, foreground=color)
+        self.arbol_flujo.bind("<Double-1>", lambda e: self.flujo_cambiar())
+        div.add(izq, minsize=480, width=640, stretch="always")
+
+        # Guia rapida
+        der = tk.Frame(div, bg=BG)
+        tk.Label(der, text="¿Como funciona?", bg=BG, fg=TEXTO, font=FUENTE_B).pack(anchor="w", pady=(0, 6))
+        guia = self._texto(der, wrap="word")
+        guia.configure(font=FUENTE, spacing1=2, spacing3=2)
+        guia.tag_configure("titulo", font=("Segoe UI", 11, "bold"), foreground=TEXTO, spacing1=6)
+        guia.tag_configure("rama", font=FUENTE_B, foreground=VERDE)
+        for tipo, (_, color) in FLUJO.items():
+            guia.tag_configure(tipo, font=FUENTE_B, foreground=color)
+        guia.tag_configure("diagrama", font=FUENTE_MONO, foreground=TENUE)
+        guia.config(state="normal")
+        for texto, tag in GUIA_FLUJO:
+            guia.insert("end", texto, tag)
+        guia.config(state="disabled")
+        div.add(der, minsize=280, stretch="always")
 
     def _tarjeta(self, padre, titulo, subtitulo):
         card = tk.Frame(padre, bg=PANEL, padx=18, pady=14)
@@ -1131,6 +1236,40 @@ class App(tk.Tk):
             self.arbol_ramas.insert("", "end", iid=r, values=(r, "● actual" if actual else ""),
                                     tags=("actual",) if actual else ())
 
+        self._refrescar_flujo(rama)
+
+    def _refrescar_flujo(self, actual):
+        seleccion = self.arbol_flujo.selection()
+        self.arbol_flujo.delete(*self.arbol_flujo.get_children())
+        flujo = self._flujo()
+        if not flujo:
+            self.lbl_flujo.config(text="Git Flow no esta inicializado en este proyecto", fg=AMARILLO)
+            self.lbl_flujo_sub.config(text="Al inicializarlo se crea la rama 'develop' a partir de tu "
+                                           "rama principal. Lee la guia de la derecha para ver como funciona.")
+            self.btn_flujo_init.grid()
+            return
+        self.btn_flujo_init.grid_remove()
+        principal, desarrollo = flujo["main"], flujo["develop"]
+        self.lbl_flujo.config(text=f"Rama principal: {principal}   ·   Rama de desarrollo: {desarrollo}",
+                              fg=TEXTO)
+        version = self._ultima_version()
+        self.lbl_flujo_sub.config(text=f"Ultima version publicada: {version}" if version else
+                                  "Todavia no hay versiones publicadas (se crean al terminar un release).")
+        ramas = self.git.ramas()
+        release = self._release_abierta(flujo, ramas)
+        for r in ramas:
+            tipo = self._tipo_flujo(r, flujo)
+            if not tipo:
+                continue
+            if tipo == "feature":
+                destino = desarrollo
+            else:
+                destino = f"{principal} y {release if tipo == 'hotfix' and release else desarrollo}"
+            self.arbol_flujo.insert("", "end", iid=r, tags=(tipo,),
+                                    values=(r + ("   ● actual" if r == actual else ""), FLUJO[tipo][0], destino))
+        if seleccion and self.arbol_flujo.exists(seleccion[0]):
+            self.arbol_flujo.selection_set(seleccion[0])
+
     def _previsualizar(self, _=None):
         sel = self.arbol.selection()
         if len(sel) != 1:
@@ -1457,6 +1596,245 @@ class App(tk.Tk):
                                      icon="warning", parent=self):
                 self.after(100, lambda: self.ejecutar(["branch", "-D", rama], ok=f"✓ Rama '{rama}' eliminada"))
         self.en_segundo_plano(lambda: self.git.run("branch", "-d", rama), fin)
+
+    # ----------------------------- Git Flow --------------------------- #
+    def _flujo(self):
+        """Configuracion de Git Flow (mismas claves que la extension git-flow), o None si no esta."""
+        principal = self.git.config("gitflow.branch.master")
+        desarrollo = self.git.config("gitflow.branch.develop")
+        if not principal or not desarrollo:
+            return None
+        return {
+            "main": principal,
+            "develop": desarrollo,
+            "prefijos": {t: self.git.config(f"gitflow.prefix.{t}") or f"{t}/" for t in FLUJO},
+            "etiqueta": self.git.config("gitflow.prefix.versiontag"),
+        }
+
+    def _tipo_flujo(self, rama, flujo):
+        return next((t for t, p in flujo["prefijos"].items() if rama.startswith(p)), None)
+
+    def _release_abierta(self, flujo, ramas):
+        return next((r for r in ramas if r.startswith(flujo["prefijos"]["release"])), None)
+
+    def _ultima_version(self):
+        return next((t for t in self.git.etiquetas() if re.search(r"\d+\.\d+", t)), None)
+
+    def _siguiente_version(self, tipo):
+        m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", self._ultima_version() or "")
+        if not m:
+            return "1.0.0" if tipo == "release" else "1.0.1"
+        mayor, menor, parche = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        return f"{mayor}.{menor + 1}.0" if tipo == "release" else f"{mayor}.{menor}.{parche + 1}"
+
+    def _flujo_o_inicializar(self):
+        flujo = self._flujo()
+        if not flujo and messagebox.askyesno(
+            "Git Flow", "Git Flow todavia no esta inicializado en este proyecto.\n\n¿Inicializarlo ahora?",
+            parent=self,
+        ):
+            self.flujo_inicializar()
+        return flujo
+
+    def _flujo_seleccionada(self, flujo):
+        sel = self.arbol_flujo.selection()
+        if sel:
+            return sel[0]
+        actual = self.git.rama()
+        if self._tipo_flujo(actual, flujo):
+            return actual
+        self.aviso("Selecciona una rama de Git Flow de la lista.", AMARILLO)
+        return None
+
+    def flujo_inicializar(self):
+        if not self.git.tiene_commits():
+            messagebox.showinfo("Primero un commit",
+                                "Git Flow necesita al menos un commit.\n\n"
+                                "Guarda tu primer commit en la pestaña Cambios y vuelve a intentarlo.", parent=self)
+            return
+        ramas = self.git.ramas()
+        principal = next((r for r in ("main", "master") if r in ramas), None) or self.git.rama() or "main"
+        desarrollo = "develop"
+        existe = desarrollo in ramas
+        if not messagebox.askyesno(
+            "Inicializar Git Flow",
+            f"Rama principal (version publicada): {principal}\n"
+            f"Rama de desarrollo: {desarrollo}"
+            + (" (ya existe)" if existe else f" (se creara a partir de '{principal}')")
+            + "\n\nLas ramas nuevas usaran los prefijos feature/, release/ y hotfix/.\n\n¿Continuar?",
+            parent=self,
+        ):
+            return
+
+        def trabajo():
+            g = self.git
+            if not existe:
+                base = f"origin/{desarrollo}" if desarrollo in self.remotas else principal
+                if g.run("branch", desarrollo, base)[0]:
+                    return False
+            for clave, valor in (("branch.master", principal), ("branch.develop", desarrollo),
+                                 ("prefix.feature", "feature/"), ("prefix.release", "release/"),
+                                 ("prefix.hotfix", "hotfix/"), ("prefix.versiontag", "")):
+                g.run("config", "--local", f"gitflow.{clave}", valor, silencioso=True)
+            g.run("checkout", desarrollo)
+            return True
+
+        def fin(ok):
+            if ok:
+                self.aviso(f"✓ Git Flow listo. Ahora trabajas en '{desarrollo}'.")
+            else:
+                messagebox.showerror("Error", "No se pudo crear la rama de desarrollo. Revisa el registro.",
+                                     parent=self)
+        self.en_segundo_plano(trabajo, fin, "Inicializando Git Flow...")
+
+    def flujo_iniciar(self, tipo):
+        flujo = self._flujo_o_inicializar()
+        if not flujo:
+            return
+        nombre_tipo, prefijo = FLUJO[tipo][0], flujo["prefijos"][tipo]
+        ramas = self.git.ramas()
+        abierta = next((r for r in ramas if r.startswith(prefijo)), None)
+        if tipo != "feature" and abierta:
+            messagebox.showinfo(f"{nombre_tipo} en curso",
+                                f"Ya hay un {nombre_tipo.lower()} en curso: '{abierta}'.\n\n"
+                                "Terminalo antes de empezar otro.", parent=self)
+            return
+        base = flujo["main"] if tipo == "hotfix" else flujo["develop"]
+        if base not in ramas:
+            messagebox.showerror("Falta una rama", f"No existe la rama '{base}' en este proyecto.", parent=self)
+            return
+        if tipo == "feature":
+            pregunta, sugerido = "Nombre de la funcion (ej: login, carrito-compras):", ""
+        else:
+            pregunta, sugerido = "Numero de la nueva version (ej: 1.2.0):", self._siguiente_version(tipo)
+        nombre = simpledialog.askstring(f"Nuevo {nombre_tipo.lower()}", pregunta,
+                                        initialvalue=sugerido, parent=self)
+        if not nombre or not nombre.strip():
+            return
+        nombre = re.sub(r"\s+", "-", nombre.strip())
+        rama = prefijo + nombre
+        if not self.git.nombre_rama_valido(rama):
+            messagebox.showwarning("Nombre no valido", f"'{rama}' no es un nombre de rama valido.", parent=self)
+            return
+        if rama in ramas:
+            messagebox.showwarning("Ya existe", f"Ya existe la rama '{rama}'.", parent=self)
+            return
+        if tipo != "feature" and flujo["etiqueta"] + nombre in self.git.etiquetas():
+            messagebox.showwarning("Version repetida", f"La version '{nombre}' ya fue publicada.", parent=self)
+            return
+        self.ejecutar(["checkout", "-b", rama, base], ok=f"✓ Ahora trabajas en '{rama}' (sale de '{base}')",
+                      error="No se pudo crear la rama.\n\n"
+                            "Si tienes cambios sin guardar que chocan con la rama base, haz un commit primero.")
+
+    def flujo_terminar(self):
+        flujo = self._flujo_o_inicializar()
+        if not flujo:
+            return
+        rama = self._flujo_seleccionada(flujo)
+        if not rama:
+            return
+        if self.git.hay_cambios_sin_guardar():
+            messagebox.showwarning("Cambios sin guardar",
+                                   "Tienes cambios sin guardar. Haz un commit (o descartalos) "
+                                   "antes de terminar la rama.", parent=self)
+            return
+        if not self._asegurar_usuario():
+            return
+        tipo = self._tipo_flujo(rama, flujo)
+        principal, desarrollo = flujo["main"], flujo["develop"]
+        if tipo == "feature":
+            destinos, etiqueta = [desarrollo], None
+            pasos = f"1. Fusionar '{rama}' en '{desarrollo}'\n2. Eliminar la rama '{rama}'"
+        else:
+            etiqueta = flujo["etiqueta"] + rama[len(flujo["prefijos"][tipo]):]
+            # Si hay un release en curso, el hotfix va a el (llegara a develop cuando se termine)
+            segundo = (self._release_abierta(flujo, self.git.ramas()) if tipo == "hotfix" else None) or desarrollo
+            destinos = [principal, segundo]
+            pasos = (f"1. Fusionar '{rama}' en '{principal}'\n2. Crear la etiqueta de version '{etiqueta}'\n"
+                     f"3. Fusionar '{rama}' en '{segundo}'\n4. Eliminar la rama '{rama}'")
+        if not messagebox.askyesno(f"Terminar {FLUJO[tipo][0].lower()}",
+                                   f"Se haran estos pasos:\n\n{pasos}\n\n¿Continuar?", parent=self):
+            return
+        en_remoto = rama in self.remotas
+
+        def trabajo():
+            g = self.git
+            for destino in destinos:
+                if g.run("checkout", destino)[0]:
+                    return "error", destino
+                c, o, e = g.run("merge", "--no-ff", "-m", f"Merge branch '{rama}' into {destino}", rama)
+                if c:
+                    return ("conflicto" if "CONFLICT" in o + e else "error"), destino
+                if etiqueta and destino == principal and etiqueta not in g.etiquetas():
+                    if g.run("tag", "-a", etiqueta, "-m", f"Version {etiqueta}")[0]:
+                        return "error", destino
+            if g.run("branch", "-d", rama)[0]:
+                return "error", rama
+            return "ok", destinos[-1]
+
+        def fin(r):
+            estado, donde = r
+            if estado == "ok":
+                self.aviso(f"✓ '{rama}' terminada. Ahora estas en '{donde}'.")
+                if self.git.remoto() and messagebox.askyesno(
+                    f"Subir a {self.plat}",
+                    f"¿Subir el resultado a {self.plat}?\n\nSe enviaran las ramas: {', '.join(destinos)}"
+                    + (f"\nLa etiqueta de version: {etiqueta}" if etiqueta else "")
+                    + (f"\nY se borrara '{rama}' de {self.plat}" if en_remoto else ""), parent=self,
+                ):
+                    self.after(100, lambda: self._flujo_subir(destinos, etiqueta, rama if en_remoto else None))
+            elif estado == "conflicto":
+                messagebox.showwarning(
+                    "Conflictos",
+                    f"Al fusionar '{rama}' en '{donde}' algunos archivos chocaron.\n\n"
+                    "Abrelos, busca las marcas <<<<<<< y >>>>>>>, deja la version correcta y guarda un "
+                    "commit. Despues vuelve a pulsar 'Terminar' para completar los pasos que faltan.",
+                    parent=self)
+            else:
+                messagebox.showerror("No se pudo terminar",
+                                     f"Fallo un paso en '{donde}'. Revisa el registro de abajo.", parent=self)
+        self.en_segundo_plano(trabajo, fin, f"Terminando '{rama}'...")
+
+    def _flujo_subir(self, ramas, etiqueta, borrar):
+        def trabajo():
+            extra = [f"refs/tags/{etiqueta}"] if etiqueta else []
+            codigo = self.git.run("push", "-u", "origin", *ramas, *extra)[0]
+            if codigo == 0 and borrar:
+                self.git.run("push", "origin", "--delete", borrar)
+            return codigo
+
+        def fin(codigo):
+            if codigo == 0:
+                self.aviso(f"✓ Ramas{' y version' if etiqueta else ''} subidas a {self.plat}")
+            else:
+                messagebox.showerror("No se pudo subir",
+                                     f"{self.plat} rechazo el envio. Si hay cambios nuevos alla, traelos en cada "
+                                     "rama (pestaña Cambios) y vuelve a subir. Revisa el registro.", parent=self)
+        self.en_segundo_plano(trabajo, fin, f"Subiendo a {self.plat}...")
+
+    def flujo_publicar(self):
+        flujo = self._flujo_o_inicializar()
+        if not flujo:
+            return
+        rama = self._flujo_seleccionada(flujo)
+        if not rama:
+            return
+        if not self.git.remoto():
+            self._sin_remoto()
+            return
+        self.ejecutar(["push", "-u", "origin", rama],
+                      ok=f"✓ '{rama}' publicada en {self.plat}: otras personas ya pueden trabajar en ella",
+                      error="No se pudo publicar la rama. Revisa el registro.")
+
+    def flujo_cambiar(self):
+        sel = self.arbol_flujo.selection()
+        if not sel:
+            self.aviso("Selecciona una rama de la lista.", AMARILLO)
+            return
+        if sel[0] != self.git.rama():
+            self.ejecutar(["checkout", sel[0]], ok=f"✓ Ahora trabajas en la rama '{sel[0]}'",
+                          error="No se pudo cambiar de rama.\n\n"
+                                "Normalmente pasa porque tienes cambios sin guardar. Haz un commit primero.")
 
     # ----------------------------- Cuentas ---------------------------- #
     def cuenta_del_proyecto(self):

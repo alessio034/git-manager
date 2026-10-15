@@ -71,6 +71,38 @@ Todos los commits con código, mensaje, autor y fecha. Haz doble clic en uno par
 
 Crear, cambiar, fusionar y eliminar ramas. Haz doble clic en una rama para cambiarte a ella.
 
+### Pestaña Git Flow
+
+Git Flow es una forma ordenada de trabajar con ramas: cada tipo de trabajo tiene su propia rama, así la versión publicada nunca se rompe mientras desarrollas.
+
+| Rama | Para qué sirve | Sale de | Al terminar se fusiona en |
+|---|---|---|---|
+| `main` | La versión publicada (producción) | — | — |
+| `develop` | Junta las funciones terminadas para la próxima versión | `main` | — |
+| `feature/<nombre>` | Una función nueva | `develop` | `develop` |
+| `release/<versión>` | Preparar una versión (últimos ajustes) | `develop` | `main` (con etiqueta) y `develop` |
+| `hotfix/<versión>` | Arreglo urgente de lo publicado | `main` | `main` (con etiqueta) y `develop`* |
+
+\* Si hay un release en curso, el hotfix se fusiona en ese release en lugar de `develop`.
+
+En la pestaña:
+
+- **Inicializar Git Flow:** crea `develop` a partir de tu rama principal y te cambia a ella.
+- **＋ Feature / ＋ Release / ＋ Hotfix:** crea la rama desde su base. Para releases y hotfixes sugiere el siguiente número de versión según la última etiqueta.
+- **✓ Terminar seleccionada:** hace las fusiones, crea la etiqueta de versión, borra la rama y ofrece subir todo a la plataforma. Si hay conflictos, resuélvelos, guarda un commit y vuelve a pulsar *Terminar*: continúa con los pasos que faltan.
+- **⬆ Publicar:** sube la rama para que otras personas trabajen en ella.
+
+**Ejemplo:**
+
+1. **＋ Feature** `login` → crea `feature/login` desde `develop`.
+2. Programas y guardas commits en la pestaña Cambios.
+3. **✓ Terminar** → `feature/login` se fusiona en `develop` y se borra.
+4. **＋ Release** `1.0.0` → crea `release/1.0.0` desde `develop`; corriges detalles.
+5. **✓ Terminar** → se fusiona en `main`, se crea la etiqueta `1.0.0` y se fusiona en `develop`.
+6. ¿Falló algo en producción? **＋ Hotfix** `1.0.1` desde `main`, lo arreglas y **✓ Terminar**.
+
+> 💡 No necesitas instalar la extensión `git-flow`: el programa usa comandos normales de Git, pero guarda la configuración con las mismas claves (`gitflow.*`), así que puedes usar ambas en el mismo proyecto.
+
 ### Pestaña Cuentas y repositorio
 
 - **Tus cuentas:** agrega, edita, elimina y elige la cuenta de este proyecto.
@@ -148,6 +180,8 @@ La lista de cambios también se actualiza sola cuando vuelves a la ventana despu
 | Traer | `git pull --no-rebase origin <rama>` |
 | Nueva rama / Cambiar | `git checkout -b <rama>` / `git checkout <rama>` |
 | Fusionar | `git merge <rama>` |
+| Git Flow: iniciar | `git checkout -b feature/<nombre> develop` (release desde `develop`, hotfix desde `main`) |
+| Git Flow: terminar | `git merge --no-ff` en cada destino → `git tag -a <versión>` → `git branch -d <rama>` |
 | Conectar repositorio | `git remote add origin <url>` |
 | Usar cuenta | `git config --local user.name / user.email / credential.<servidor>.username` |
 
